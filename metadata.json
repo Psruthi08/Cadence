@@ -1,0 +1,10 @@
+{
+  "name": "Cadence - AI Speech & Presentation Coach",
+  "description": "Get honest, instant speech feedback, delivery metrics, interactive transcripts, and AI coaching for students and job seekers.",
+  "requestFramePermissions": [
+    "microphone"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
