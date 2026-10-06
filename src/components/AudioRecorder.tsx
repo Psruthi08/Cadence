@@ -22,6 +22,7 @@ interface AudioRecorderProps {
   onAnalyzeComplete: (sessionData: any) => void;
   isAnalyzing: boolean;
   setIsAnalyzing: (analyzing: boolean) => void;
+  resetToken: number;
 }
 
 const CATEGORY_OPTIONS: Array<{
@@ -65,6 +66,7 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({
   onAnalyzeComplete,
   isAnalyzing,
   setIsAnalyzing,
+  resetToken,
 }) => {
   // Setup state
   const [selectedCategory, setSelectedCategory] = useState<PresentationCategory>('job_interview');
@@ -232,21 +234,73 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({
 
   // Reset recording
   const resetRecording = () => {
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
-      mediaRecorderRef.current.stop();
+  // Stop an active recorder
+  if (
+    mediaRecorderRef.current &&
+    mediaRecorderRef.current.state !== 'inactive'
+  ) {
+    mediaRecorderRef.current.stop();
+  }
+
+  // Stop microphone tracks
+  if (mediaRecorderRef.current?.stream) {
+    mediaRecorderRef.current.stream
+      .getTracks()
+      .forEach((track) => track.stop());
+  }
+
+  // Stop timer
+  if (timerIntervalRef.current) {
+    clearInterval(timerIntervalRef.current);
+    timerIntervalRef.current = null;
+  }
+
+  // Stop waveform animation
+  if (animationFrameRef.current) {
+    cancelAnimationFrame(animationFrameRef.current);
+    animationFrameRef.current = null;
+  }
+
+  // Close audio context
+  if (audioContextRef.current) {
+    if (audioContextRef.current.state !== 'closed') {
+      audioContextRef.current.close();
     }
-    if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
-    if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current);
+    audioContextRef.current = null;
+  }
 
-    setRecordingState('idle');
-    setDuration(0);
-    setAudioUrl(null);
-    setAudioBlob(null);
-    setAudioBase64(null);
-    setIsPlayingPreview(false);
-    setAnalysisError(null);
-  };
+  // Stop preview audio
+  if (audioElementRef.current) {
+    audioElementRef.current.pause();
+    audioElementRef.current.currentTime = 0;
+    audioElementRef.current = null;
+  }
 
+  // Release the previous object URL
+  if (audioUrl) {
+    URL.revokeObjectURL(audioUrl);
+  }
+
+  // Clear all recording state
+  mediaRecorderRef.current = null;
+  audioChunksRef.current = [];
+
+  setRecordingState('idle');
+  setDuration(0);
+  setAudioUrl(null);
+  setAudioBlob(null);
+  setAudioBase64(null);
+  setIsPlayingPreview(false);
+  setAnalysisError(null);
+  setLiveVolume(0);
+  setTeleprompterScrolling(false);
+};
+
+useEffect(() => {
+  if (resetToken > 0) {
+    resetRecording();
+  }
+}, [resetToken]);
   // Teleprompter autoscroll loop
   useEffect(() => {
     let interval: number;
@@ -438,6 +492,9 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({
             </h2>
             <p className="text-sm text-slate-500 mt-0.5">
               Practice presentations and interviews. Receive honest speech analytics and AI coaching.
+            </p>
+            <p className="text-xs text-slate-500 mt-2 max-w-2xl">
+              Audio is sent to Gemini for analysis. Transcript, metrics, and coaching are saved to Supabase under this browser profile when cloud sync is configured; recordings are not stored there.
             </p>
           </div>
 

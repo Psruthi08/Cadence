@@ -15,6 +15,29 @@ const port = Number(process.env.PORT) || 3000;
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
+const SUPABASE_TABLE = 'cadence_sessions';
+const OWNER_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function getSupabaseConfig() {
+  const url = process.env.SUPABASE_URL?.replace(/\/+$/, '');
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  return url && key ? { url, key } : null;
+}
+
+function supabaseHeaders(key: string, extra: Record<string, string> = {}) {
+  return {
+    apikey: key,
+    Authorization: `Bearer ${key}`,
+    'Content-Type': 'application/json',
+    ...extra,
+  };
+}
+
+function validOwnerId(ownerId: unknown): ownerId is string {
+  return typeof ownerId === 'string' && OWNER_ID_RE.test(ownerId);
+}
+
+
 // Initialise Gemini client
 const apiKey = process.env.GEMINI_API_KEY || '';
 const ai = new GoogleGenAI({
@@ -81,6 +104,90 @@ export interface SpeechAnalysisResponse {
     recruiterVerdict: string;
   };
 }
+
+// Session persistence uses a random per-browser owner ID. The service key stays server-side.
+app.get('/api/sessions', async (req, res) => {
+  const ownerId = req.query.ownerId;
+  if (!validOwnerId(ownerId)) return res.status(400).json({ error: 'A valid owner ID is required.' });
+  const config = getSupabaseConfig();
+  if (!config) return res.status(503).json({ error: 'Session database is not configured.' });
+
+  try {
+    const url = new URL(`${config.url}/rest/v1/${SUPABASE_TABLE}`);
+    url.searchParams.set('owner_id', `eq.${ownerId}`);
+    url.searchParams.set('select', 'session_data');
+    url.searchParams.set('order', 'created_at.desc');
+    const response = await fetch(url, { headers: supabaseHeaders(config.key) });
+    if (!response.ok) {
+      console.error('Session load failed:', response.status);
+      return res.status(502).json({ error: 'Could not load saved sessions.' });
+    }
+    const rows = await response.json() as Array<{ session_data: SpeechAnalysisResponse }>;
+    return res.json(rows.map((row) => row.session_data));
+  } catch (error) {
+    console.error('Session load failed:', error);
+    return res.status(502).json({ error: 'Could not load saved sessions.' });
+  }
+});
+
+app.post('/api/sessions', async (req, res) => {
+  const { ownerId, session } = req.body ?? {};
+  if (!validOwnerId(ownerId) || !session || typeof session.id !== 'string' || typeof session.timestamp !== 'number') {
+    return res.status(400).json({ error: 'A valid owner ID and session are required.' });
+  }
+  const config = getSupabaseConfig();
+  if (!config) return res.status(503).json({ error: 'Session database is not configured.' });
+
+  try {
+    const { audioBlobUrl: _temporaryAudioUrl, ...persistedSession } = session;
+    const url = new URL(`${config.url}/rest/v1/${SUPABASE_TABLE}`);
+    url.searchParams.set('on_conflict', 'owner_id,session_id');
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: supabaseHeaders(config.key, { Prefer: 'resolution=merge-duplicates,return=minimal' }),
+      body: JSON.stringify({
+        owner_id: ownerId,
+        session_id: session.id,
+        session_data: persistedSession,
+        created_at: new Date(session.timestamp).toISOString(),
+      }),
+    });
+    if (!response.ok) {
+      console.error('Session save failed:', response.status, await response.text());
+      return res.status(502).json({ error: 'Could not save the session.' });
+    }
+    return res.status(204).end();
+  } catch (error) {
+    console.error('Session save failed:', error);
+    return res.status(502).json({ error: 'Could not save the session.' });
+  }
+});
+
+app.delete('/api/sessions/:sessionId', async (req, res) => {
+  const ownerId = req.query.ownerId;
+  const sessionId = req.params.sessionId;
+  if (!validOwnerId(ownerId) || !sessionId) return res.status(400).json({ error: 'A valid owner ID and session ID are required.' });
+  const config = getSupabaseConfig();
+  if (!config) return res.status(503).json({ error: 'Session database is not configured.' });
+
+  try {
+    const url = new URL(`${config.url}/rest/v1/${SUPABASE_TABLE}`);
+    url.searchParams.set('owner_id', `eq.${ownerId}`);
+    url.searchParams.set('session_id', `eq.${sessionId}`);
+    const response = await fetch(url, {
+      method: 'DELETE',
+      headers: supabaseHeaders(config.key, { Prefer: 'return=minimal' }),
+    });
+    if (!response.ok) {
+      console.error('Session delete failed:', response.status, await response.text());
+      return res.status(502).json({ error: 'Could not delete the session.' });
+    }
+    return res.status(204).end();
+  } catch (error) {
+    console.error('Session delete failed:', error);
+    return res.status(502).json({ error: 'Could not delete the session.' });
+  }
+});
 
 // POST /api/analyze-speech
 app.post('/api/analyze-speech', async (req, res) => {
@@ -449,6 +556,138 @@ app.post('/api/coach-voice', async (req, res) => {
   }
 });
 
+app.post('/api/analyze-drill', async (req, res) => {
+  try {
+    const { drillName, instructions, answer } = req.body;
+
+    if (!drillName || !answer) {
+      return res.status(400).json({
+        error: 'Drill name and answer are required.',
+      });
+    }
+
+    const prompt = `
+You are Cadence, an AI speech coach.
+
+Evaluate the user's answer to a speaking practice drill.
+
+Drill:
+${drillName}
+
+Instructions:
+${instructions || 'Evaluate the response for clarity, confidence, and delivery.'}
+
+User's answer:
+${answer}
+
+Analyze the answer and return useful coaching.
+
+Return ONLY valid JSON in this exact structure:
+
+{
+  "overallFeedback": "short overall assessment",
+  "strengths": [
+    "strength 1",
+    "strength 2"
+  ],
+  "improvements": [
+    "improvement 1",
+    "improvement 2"
+  ],
+  "fillerWords": [
+    "word1"
+  ],
+  "clarity": 0,
+  "confidence": 0,
+  "delivery": 0
+}
+
+Scores must be numbers from 0 to 100.
+`;
+
+    // Try multiple Gemini models so a temporary overload
+    // on one model does not break the practice drill.
+    const candidateModels = [
+      'gemini-3.8-flash',
+      'gemini-flash-latest',
+      'gemini-3.1-flash-lite',
+    ];
+
+    let response;
+    let lastError;
+
+    for (const modelName of candidateModels) {
+      try {
+        console.log(`Trying drill analysis with model: ${modelName}`);
+
+        response = await ai.models.generateContent({
+          model: modelName,
+          contents: prompt,
+        });
+
+        if (response?.text) {
+          console.log(`Drill analysis succeeded with model: ${modelName}`);
+          break;
+        }
+      } catch (error) {
+        lastError = error;
+
+        const status =
+          typeof error === 'object' &&
+          error !== null &&
+          'status' in error
+            ? (error as { status?: number }).status
+            : undefined;
+
+        console.warn(
+          `Drill model ${modelName} failed with status ${status}. Trying next model...`
+        );
+
+        // Small delay before trying the next model.
+        await new Promise((resolve) => setTimeout(resolve, 500));
+      }
+    }
+
+    if (!response) {
+      throw lastError || new Error('All Gemini drill models failed.');
+    }
+
+    const text = response.text;
+
+    if (!text) {
+      return res.status(500).json({
+        error: 'Gemini returned an empty response.',
+      });
+    }
+
+    let cleanedText = text.trim();
+
+    // Remove Markdown JSON fences if Gemini adds them.
+    if (cleanedText.startsWith('```json')) {
+      cleanedText = cleanedText
+        .replace(/^```json/, '')
+        .replace(/```$/, '')
+        .trim();
+    } else if (cleanedText.startsWith('```')) {
+      cleanedText = cleanedText
+        .replace(/^```/, '')
+        .replace(/```$/, '')
+        .trim();
+    }
+
+    const feedback = JSON.parse(cleanedText);
+
+    return res.json(feedback);
+  } catch (error) {
+    console.error('Drill analysis error:', error);
+
+    return res.status(500).json({
+      error:
+        'Gemini is temporarily unavailable. Please try submitting the drill again in a moment.',
+    });
+  }
+});
+
 // Full-stack Vite handling
 async function startServer() {
   if (process.env.NODE_ENV !== 'production') {
@@ -459,9 +698,9 @@ async function startServer() {
     });
     app.use(vite.middlewares);
   } else {
-    app.use(express.static(path.resolve(__dirname, 'dist')));
+    app.use(express.static(path.resolve(__dirname, 'public')));
     app.get('*', (_req, res) => {
-      res.sendFile(path.resolve(__dirname, 'dist', 'index.html'));
+      res.sendFile(path.resolve(__dirname, 'public', 'index.html'));
     });
   }
 
@@ -470,4 +709,6 @@ async function startServer() {
   });
 }
 
-startServer();
+export default app;
+
+if (process.env.VERCEL !== '1') startServer();

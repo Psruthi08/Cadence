@@ -23,6 +23,19 @@ import {
 } from 'lucide-react';
 
 const STORAGE_KEY = 'cadence_speech_sessions_v1';
+const OWNER_KEY = 'cadence_session_owner_v1';
+
+function getOwnerId(): string {
+  let ownerId = localStorage.getItem(OWNER_KEY);
+  if (!ownerId) {
+    ownerId = window.crypto?.randomUUID?.() || 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (char) => {
+      const random = Math.random() * 16 | 0;
+      return (char === 'x' ? random : (random & 0x3 | 0x8)).toString(16);
+    });
+    localStorage.setItem(OWNER_KEY, ownerId);
+  }
+  return ownerId;
+}
 
 export default function App() {
   const [sessions, setSessions] = useState<SpeechSession[]>(() => {
@@ -45,9 +58,49 @@ export default function App() {
   });
 
   const [activeTab, setActiveTab] = useState<'studio' | 'metrics' | 'coach' | 'history'>('studio');
+  const [recorderKey, setRecorderKey] = useState<number>(0);
   const [isAnalyzing, setIsAnalyzing] = useState<boolean>(false);
+  const [recorderResetToken, setRecorderResetToken] = useState<number>(0);
+  const [showLatestCompleted, setShowLatestCompleted] = useState<boolean>(true);
   const [showSampleModal, setShowSampleModal] = useState<boolean>(false);
   const [showExportModal, setShowExportModal] = useState<boolean>(false);
+  const [syncError, setSyncError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let mounted = true;
+    const ownerId = getOwnerId();
+    fetch(`/api/sessions?ownerId=${encodeURIComponent(ownerId)}`)
+      .then(async (response) => {
+        if (!response.ok) throw new Error((await response.json()).error || 'Session sync is unavailable.');
+        return response.json() as Promise<SpeechSession[]>;
+      })
+      .then(async (remoteSessions) => {
+        if (!mounted) return;
+        if (!Array.isArray(remoteSessions)) throw new Error('The session database returned an invalid response.');
+        const remoteIds = new Set(remoteSessions.map((session) => session.id));
+        const localSessions = sessions.filter((session) => !session.id.startsWith('sample-') && !remoteIds.has(session.id));
+        await Promise.all(localSessions.map(async (session) => {
+          const response = await fetch('/api/sessions', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ownerId, session }),
+          });
+          if (!response.ok) throw new Error((await response.json()).error || 'Could not migrate a saved session.');
+        }));
+        const allSessions = [...remoteSessions, ...localSessions].sort((a, b) => b.timestamp - a.timestamp);
+        if (mounted && allSessions.length > 0) {
+          setSessions(allSessions);
+          setActiveSession(allSessions[0]);
+        }
+        setSyncError(null);
+      })
+      .catch((error) => {
+        if (!mounted) return;
+        console.warn('Session database sync failed:', error);
+        setSyncError(error.message || 'Session database sync is unavailable.');
+      });
+    return () => { mounted = false; };
+  }, []);
 
   // Sync to localStorage
   useEffect(() => {
@@ -61,8 +114,20 @@ export default function App() {
   // Handle new analysis complete
   const handleAnalyzeComplete = (newSession: SpeechSession) => {
     setSessions((prev) => [newSession, ...prev]);
+    fetch('/api/sessions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ownerId: getOwnerId(), session: newSession }),
+    }).then(async (response) => {
+      if (!response.ok) throw new Error((await response.json()).error || 'Could not save the session.');
+      setSyncError(null);
+    }).catch((error) => {
+      console.error('Session save failed:', error);
+      setSyncError(error.message || 'Could not save the session to the database.');
+    });
     setActiveSession(newSession);
-    setActiveTab('metrics'); // Jump straight into metrics and coaching review
+    setShowLatestCompleted(true);
+    setActiveTab('metrics');
   };
 
   const handleSelectSample = (sample: SpeechSession) => {
@@ -73,6 +138,17 @@ export default function App() {
   const handleDeleteSession = (id: string) => {
     const updated = sessions.filter((s) => s.id !== id);
     setSessions(updated);
+    if (!id.startsWith('sample-')) {
+      fetch(`/api/sessions/${encodeURIComponent(id)}?ownerId=${encodeURIComponent(getOwnerId())}`, { method: 'DELETE' })
+        .then(async (response) => {
+          if (!response.ok) throw new Error((await response.json()).error || 'Could not delete the session.');
+          setSyncError(null);
+        })
+        .catch((error) => {
+          console.error('Session delete failed:', error);
+          setSyncError(error.message || 'Could not delete the saved session.');
+        });
+    }
     if (activeSession.id === id && updated.length > 0) {
       setActiveSession(updated[0]);
     }
@@ -84,12 +160,22 @@ export default function App() {
       <Header
         activeTab={activeTab}
         setActiveTab={setActiveTab}
-        onOpenNewSession={() => setActiveTab('studio')}
+        onOpenNewSession={() => {
+          setShowLatestCompleted(false);
+          setRecorderResetToken((prev) => prev + 1);
+          setActiveTab('studio');
+        }}
         onSelectSample={() => setShowSampleModal(true)}
       />
 
       {/* Main Container */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
+        {syncError && (
+          <div role="status" className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+            Session database: {syncError}
+          </div>
+        )}
+
         {/* Context Breadcrumb / Session Indicator */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white p-4 rounded-xl border border-slate-200 shadow-2xs">
           <div className="flex items-center gap-2 text-xs text-slate-600 truncate">
@@ -162,13 +248,14 @@ export default function App() {
         {activeTab === 'studio' && (
           <div className="space-y-8 animate-fade-in">
             <AudioRecorder
+              resetToken={recorderResetToken}
               onAnalyzeComplete={handleAnalyzeComplete}
               isAnalyzing={isAnalyzing}
               setIsAnalyzing={setIsAnalyzing}
             />
 
             {/* If current session exists, show preview transcript */}
-            {activeSession && (
+            {activeSession && showLatestCompleted && (
               <div className="space-y-4 pt-4 border-t border-slate-200">
                 <div className="flex items-center justify-between">
                   <h3 className="text-base font-bold font-serif text-slate-900">

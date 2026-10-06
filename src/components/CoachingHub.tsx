@@ -13,7 +13,9 @@ import {
   Target,
   Lightbulb,
 } from 'lucide-react';
+import coachAvatar from '../assets/images/coach_avatar_1790954669516.jpg';
 import { CoachingFeedback } from '../types/speech';
+import { PracticeDrill } from './PracticeDrill';
 
 interface CoachingHubProps {
   coaching: CoachingFeedback;
@@ -26,6 +28,8 @@ export const CoachingHub: React.FC<CoachingHubProps> = ({ coaching, speechTopic 
   const [activeDrillIndex, setActiveDrillIndex] = useState<number | null>(null);
   const [drillTimerSeconds, setDrillTimerSeconds] = useState<number>(0);
   const [isDrillRunning, setIsDrillRunning] = useState<boolean>(false);
+  const [interactiveDrillIndex, setInteractiveDrillIndex] = 
+    useState<number | null>(null);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const drillIntervalRef = useRef<number | null>(null);
@@ -134,8 +138,7 @@ export const CoachingHub: React.FC<CoachingHubProps> = ({ coaching, speechTopic 
       <div className="bg-white rounded-xl border border-slate-200 p-6 sm:p-7 shadow-xs">
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-5 border-b border-slate-100 pb-6">
           <div className="flex items-center gap-4">
-            <img
-              src="/src/assets/images/coach_avatar_1790954669516.jpg"
+            <img src={coachAvatar}
               alt="Elena Vance, Speech Coach"
               referrerPolicy="no-referrer"
               className="w-14 h-14 rounded-full object-cover border-2 border-slate-200 shadow-xs"
@@ -319,97 +322,67 @@ export const CoachingHub: React.FC<CoachingHubProps> = ({ coaching, speechTopic 
         </div>
       </div>
 
-      {/* Practice Drills with Interactive Timers */}
+      {/* Interactive Practice Drills */}
       <div className="bg-white rounded-xl border border-slate-200 p-5 sm:p-6 shadow-xs space-y-4">
         <div className="flex items-center justify-between border-b border-slate-100 pb-3">
           <div className="flex items-center gap-2">
             <Sparkles className="w-4 h-4 text-slate-800" />
+
             <h3 className="text-base font-bold font-serif text-slate-900">
               Immediate Practice Drills
             </h3>
           </div>
-          <span className="text-xs text-slate-500">Run before your next rehearsal</span>
+
+          <span className="text-xs text-slate-500">
+            Run before your next rehearsal
+          </span>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {coaching.practiceDrills.map((drill, idx) => {
-            const isThisDrillActive = activeDrillIndex === idx;
+            const isInteractiveDrill = interactiveDrillIndex === idx;
 
             return (
               <div
                 key={idx}
-                className={`p-4 rounded-xl border transition-all ${
-                  isThisDrillActive
-                    ? 'border-slate-900 bg-slate-900 text-white shadow-md'
-                    : 'border-slate-200 bg-white hover:border-slate-300'
+                className={`rounded-xl border transition-all ${
+                  isInteractiveDrill
+                    ? 'border-slate-900 bg-slate-50'
+                    : 'border-slate-200 bg-white'
                 }`}
               >
-                <div className="flex items-center justify-between">
-                  <h4
-                    className={`text-sm font-bold ${
-                      isThisDrillActive ? 'text-white' : 'text-slate-900'
-                    }`}
-                  >
-                    {drill.drillName}
-                  </h4>
-                  <span
-                    className={`text-xs font-mono tabular-nums px-2 py-0.5 rounded ${
-                      isThisDrillActive
-                        ? 'bg-slate-800 text-amber-400 font-bold'
-                        : 'bg-slate-100 text-slate-600'
-                    }`}
-                  >
-                    {isThisDrillActive
-                      ? formatTimer(drillTimerSeconds)
-                      : `${drill.estimatedMinutes} min drill`}
-                  </span>
-                </div>
+                <div className="p-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <h4 className="text-sm font-bold text-slate-900">
+                      {drill.drillName}
+                    </h4>
 
-                <p
-                  className={`text-xs mt-2 leading-relaxed ${
-                    isThisDrillActive ? 'text-slate-300' : 'text-slate-600'
-                  }`}
-                >
-                  {drill.instructions}
-                </p>
+                    <span className="text-xs font-mono px-2 py-1 rounded bg-slate-100 text-slate-600 whitespace-nowrap">
+                      {drill.estimatedMinutes} min
+                    </span>
+                  </div>
 
-                <div className="mt-4 pt-3 border-t border-slate-200/40 flex items-center gap-2">
-                  <button
-                    onClick={() => startDrillTimer(idx, drill.estimatedMinutes)}
-                    className={`px-3 py-1.5 rounded text-xs font-semibold transition-colors flex items-center gap-1.5 ${
-                      isThisDrillActive && isDrillRunning
-                        ? 'bg-amber-500 text-slate-950 hover:bg-amber-400'
-                        : isThisDrillActive
-                        ? 'bg-slate-700 text-white'
-                        : 'bg-slate-900 text-white hover:bg-slate-800'
-                    }`}
-                  >
-                    {isThisDrillActive && isDrillRunning ? (
-                      <>
-                        <Pause className="w-3.5 h-3.5" />
-                        <span>Pause Timer</span>
-                      </>
-                    ) : isThisDrillActive ? (
-                      <>
-                        <Play className="w-3.5 h-3.5" />
-                        <span>Resume</span>
-                      </>
-                    ) : (
-                      <>
-                        <Play className="w-3.5 h-3.5" />
-                        <span>Start Drill</span>
-                      </>
-                    )}
-                  </button>
+                  <p className="text-xs text-slate-600 mt-2 leading-relaxed">
+                    {drill.instructions}
+                  </p>
 
-                  {isThisDrillActive && (
+                  {!isInteractiveDrill && (
                     <button
-                      onClick={resetDrillTimer}
-                      className="px-2.5 py-1.5 rounded text-xs text-slate-400 hover:text-white transition-colors flex items-center gap-1"
+                      onClick={() => setInteractiveDrillIndex(idx)}
+                      className="mt-4 px-4 py-2 rounded-lg bg-slate-900 text-white text-xs font-semibold flex items-center gap-2 hover:bg-slate-800"
                     >
-                      <RotateCcw className="w-3 h-3" />
-                      <span>Reset</span>
+                      <Play className="w-3.5 h-3.5" />
+                      Start Drill
                     </button>
+                  )}
+
+                  {isInteractiveDrill && (
+                    <PracticeDrill
+                      drillName={drill.drillName}
+                      instructions={drill.instructions}
+                      estimatedMinutes={drill.estimatedMinutes}
+                      onClose={() => setInteractiveDrillIndex(null)}
+                    />
                   )}
                 </div>
               </div>
