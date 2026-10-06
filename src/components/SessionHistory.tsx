@@ -140,7 +140,9 @@ export const SessionHistory: React.FC<SessionHistoryProps> = ({
                   {/* Actions */}
                   <div className="flex items-center gap-2 pl-2 border-l border-slate-200">
                     <button
+                      type="button"
                       onClick={(e) => {
+                        e.preventDefault();
                         e.stopPropagation();
                         onDeleteSession(session.id);
                       }}
