@@ -135,22 +135,31 @@ export default function App() {
     setActiveTab('metrics');
   };
 
-  const handleDeleteSession = (id: string) => {
+  const handleDeleteSession = async (id: string) => {
+    if (!id.startsWith('sample-')) {
+      try {
+        const response = await fetch(
+          `/api/sessions/${encodeURIComponent(id)}?ownerId=${encodeURIComponent(getOwnerId())}`,
+          { method: 'DELETE' },
+        );
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({}));
+          throw new Error(errorData.error || 'Could not delete the session. Please try again.');
+        }
+        setSyncError(null);
+      } catch (error: any) {
+        console.error('Session delete failed:', error);
+        setSyncError(error.message || 'Could not delete the saved session.');
+        return;
+      }
+    }
+
     const updated = sessions.filter((s) => s.id !== id);
     setSessions(updated);
-    if (!id.startsWith('sample-')) {
-      fetch(`/api/sessions/${encodeURIComponent(id)}?ownerId=${encodeURIComponent(getOwnerId())}`, { method: 'DELETE' })
-        .then(async (response) => {
-          if (!response.ok) throw new Error((await response.json()).error || 'Could not delete the session.');
-          setSyncError(null);
-        })
-        .catch((error) => {
-          console.error('Session delete failed:', error);
-          setSyncError(error.message || 'Could not delete the saved session.');
-        });
-    }
     if (activeSession.id === id && updated.length > 0) {
       setActiveSession(updated[0]);
+    } else if (activeSession.id === id) {
+      setActiveSession(SAMPLE_SPEECH_SESSIONS[0]);
     }
   };
 
