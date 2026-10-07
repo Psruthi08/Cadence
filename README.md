@@ -6,6 +6,8 @@ Cadence is a speech and presentation rehearsal app for students and job seekers.
 
 **Live demo:** https://cadenceproject.vercel.app/
 
+**Pitch materials:** [One-page abstract](docs/Cadence_Abstract.pdf) · [Ten-slide pitch deck](docs/Cadence_Pitch_10_Slides.pptx)
+
 ## Architecture
 
 ```mermaid
@@ -75,4 +77,5 @@ The Vercel project uses the repository root, runs `npm run build`, and serves th
 - Production frontend build: `npm run build` — passed October 7, 2026.
 - Production history CRUD smoke check: save returned HTTP 204, load returned the session, delete returned HTTP 204, and reload confirmed it was absent on October 7, 2026.
 - Production AI smoke checks: synthetic speech returned the expected 19-word transcript, and drill feedback returned HTTP 200 on October 7, 2026.
+- Pitch materials: one-page abstract and ten-slide deck prepared against the October 8 brief; it includes two labeled production UI screenshots and covers the problem, demo flows, architecture, APIs, reliability changes, and next steps.
 - Before the October 8 pitch: complete one real microphone recording and verify the session history on a phone. Synthetic audio and API checks do not prove browser microphone permissions work end to end.
