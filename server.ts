@@ -405,6 +405,12 @@ Return a valid JSON object matching the exact schema requested with:
       }
     }
 
+    if (!parsedData && !incomingTranscript) {
+      return res.status(503).json({
+        error: 'Gemini could not transcribe this recording. Your audio is still available; please retry in a moment.',
+      });
+    }
+
     if (!parsedData) {
       // Heuristic fallback for temporary model outages
       const rawText = incomingTranscript || 'Thank you for listening to my practice talk on ' + topic;
