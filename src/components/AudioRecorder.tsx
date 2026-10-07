@@ -88,6 +88,7 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({
   const [audioBlob, setAudioBlob] = useState<Blob | null>(null);
   const [audioBase64, setAudioBase64] = useState<string | null>(null);
   const [audioMimeType, setAudioMimeType] = useState<string>('audio/webm');
+  const [isPreparingAudio, setIsPreparingAudio] = useState(false);
   const [isPlayingPreview, setIsPlayingPreview] = useState<boolean>(false);
   const [analysisError, setAnalysisError] = useState<string | null>(null);
   const [liveVolume, setLiveVolume] = useState<number>(0);
@@ -102,6 +103,35 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const audioElementRef = useRef<HTMLAudioElement | null>(null);
   const teleprompterRef = useRef<HTMLDivElement | null>(null);
+  const audioPreparationIdRef = useRef(0);
+  const recordingGenerationRef = useRef(0);
+
+  const prepareAudio = (blob: Blob) => {
+    const preparationId = ++audioPreparationIdRef.current;
+    setIsPreparingAudio(true);
+    setAudioBase64(null);
+    setAnalysisError(null);
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (preparationId !== audioPreparationIdRef.current) return;
+      const dataUrl = typeof reader.result === 'string' ? reader.result : '';
+      const base64 = dataUrl.includes(',') ? dataUrl.slice(dataUrl.indexOf(',') + 1) : '';
+      if (!base64) {
+        setAnalysisError('The audio could not be prepared. Please record again or upload another file.');
+        setIsPreparingAudio(false);
+        return;
+      }
+      setAudioBase64(base64);
+      setIsPreparingAudio(false);
+    };
+    reader.onerror = () => {
+      if (preparationId !== audioPreparationIdRef.current) return;
+      setAnalysisError('The audio could not be read. Please record again or upload another file.');
+      setIsPreparingAudio(false);
+    };
+    reader.readAsDataURL(blob);
+  };
 
   // Switch category defaults
   const handleCategoryChange = (cat: PresentationCategory) => {
@@ -116,6 +146,7 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({
 
   // Start real browser recording
   const startRecording = async () => {
+    const recordingGeneration = ++recordingGenerationRef.current;
     setAnalysisError(null);
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
@@ -125,6 +156,11 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({
           autoGainControl: true,
         },
       });
+
+      if (recordingGeneration !== recordingGenerationRef.current) {
+        stream.getTracks().forEach((track) => track.stop());
+        return;
+      }
 
       // Setup Web Audio API analyser for live waveform
       const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
@@ -159,24 +195,29 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({
       };
 
       recorder.onstop = async () => {
+        if (recordingGeneration !== recordingGenerationRef.current) {
+          stream.getTracks().forEach((track) => track.stop());
+          if (audioCtx.state !== 'closed') await audioCtx.close();
+          return;
+        }
         const fullBlob = new Blob(audioChunksRef.current, { type: mimeType });
         setAudioBlob(fullBlob);
         const url = URL.createObjectURL(fullBlob);
         setAudioUrl(url);
 
-        // Convert to base64
-        const reader = new FileReader();
-        reader.readAsDataURL(fullBlob);
-        reader.onloadend = () => {
-          const base64String = (reader.result as string).split(',')[1];
-          setAudioBase64(base64String);
-        };
-
         // Stop all mic tracks
         stream.getTracks().forEach((track) => track.stop());
         if (audioCtx.state !== 'closed') {
-          audioCtx.close();
+          await audioCtx.close();
         }
+        if (!fullBlob.size) {
+          setAnalysisError('No audio was captured. Check your microphone and record again.');
+          setRecordingState('idle');
+          setIsPreparingAudio(false);
+          return;
+        }
+        prepareAudio(fullBlob);
+        setRecordingState('recorded');
       };
 
       recorder.start(250); // slice every 250ms
@@ -192,6 +233,7 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({
         setTeleprompterScrolling(true);
       }
     } catch (err: any) {
+      if (recordingGeneration !== recordingGenerationRef.current) return;
       console.error('Microphone access failed:', err);
       setAnalysisError(
         'Could not access microphone. Please allow microphone permissions or upload an audio file.'
@@ -228,12 +270,14 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({
     if (animationFrameRef.current) {
       cancelAnimationFrame(animationFrameRef.current);
     }
-    setRecordingState('recorded');
     setTeleprompterScrolling(false);
   };
 
   // Reset recording
   const resetRecording = () => {
+  recordingGenerationRef.current += 1;
+  audioPreparationIdRef.current += 1;
+  setIsPreparingAudio(false);
   // Stop an active recorder
   if (
     mediaRecorderRef.current &&
@@ -365,19 +409,20 @@ useEffect(() => {
     const file = e.target.files?.[0];
     if (!file) return;
 
+  recordingGenerationRef.current += 1;
     setAnalysisError(null);
+  if (audioUrl) URL.revokeObjectURL(audioUrl);
     const url = URL.createObjectURL(file);
     setAudioUrl(url);
     setAudioBlob(file);
     setAudioMimeType(file.type || 'audio/mp3');
     setRecordingState('recorded');
 
-    const reader = new FileReader();
-    reader.readAsDataURL(file);
-    reader.onloadend = () => {
-      const base64String = (reader.result as string).split(',')[1];
-      setAudioBase64(base64String);
-    };
+    if (!file.size) {
+      setAnalysisError('The selected audio file is empty. Choose another file.');
+      return;
+    }
+    prepareAudio(file);
 
     // Calculate approximate duration
     const tempAudio = new Audio(url);
@@ -389,7 +434,9 @@ useEffect(() => {
   // Submit recorded audio to server for Gemini analysis
   const handleSubmitAnalysis = async () => {
     if (!audioBase64) {
-      setAnalysisError('Please record or upload an audio speech first.');
+      setAnalysisError(isPreparingAudio
+        ? 'Your audio is still being prepared. Please wait a moment and try again.'
+        : 'Please record or upload an audio speech first.');
       return;
     }
 
@@ -762,11 +809,11 @@ useEffect(() => {
               {recordingState === 'recorded' && (
                 <button
                   onClick={handleSubmitAnalysis}
-                  disabled={isAnalyzing}
+                  disabled={isAnalyzing || isPreparingAudio || !audioBase64}
                   className="px-5 py-2.5 rounded-lg bg-amber-500 hover:bg-amber-400 disabled:opacity-50 text-slate-950 font-bold text-xs uppercase tracking-wider transition-all flex items-center gap-2 shadow-md ml-auto"
                 >
                   <Sparkles className="w-4 h-4 text-slate-950" />
-                  <span>{isAnalyzing ? 'Analyzing Speech...' : 'Get Instant AI Feedback'}</span>
+                  <span>{isAnalyzing ? 'Analyzing Speech...' : isPreparingAudio ? 'Preparing Audio...' : 'Get Instant AI Feedback'}</span>
                 </button>
               )}
             </div>
