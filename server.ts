@@ -685,11 +685,12 @@ Scores must be numbers from 0 to 100.
     if (!feedback) throw lastError || new Error('All Gemini drill models failed.');
     return res.json(feedback);
   } catch (error) {
-    console.error('Drill analysis error:', error);
+    const diagnostic = error instanceof Error ? error.message.slice(0, 180) : 'Unknown drill analysis error.';
+    console.error('Drill analysis error:', diagnostic);
 
     return res.status(503).json({
-      error:
-        'Gemini is temporarily unavailable. Please try submitting the drill again in a moment.',
+      error: 'Gemini is temporarily unavailable. Please try submitting the drill again in a moment.',
+      diagnostic,
     });
   }
 });
