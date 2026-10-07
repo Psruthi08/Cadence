@@ -74,4 +74,5 @@ The Vercel project uses the repository root, runs `npm run build`, and serves th
 - TypeScript check: `npm run lint` — passed October 7, 2026.
 - Production frontend build: `npm run build` — passed October 7, 2026.
 - Production history CRUD smoke check: save returned HTTP 204, load returned the session, delete returned HTTP 204, and reload confirmed it was absent on October 7, 2026.
-- Before the October 8 pitch: complete one real Gemini recording and verify saved history on a phone. A successful build or API smoke check does not prove microphone permissions or Gemini credentials work end to end.
+- Production AI smoke checks: synthetic speech returned the expected 19-word transcript, and drill feedback returned HTTP 200 on October 7, 2026.
+- Before the October 8 pitch: complete one real microphone recording and verify the session history on a phone. Synthetic audio and API checks do not prove browser microphone permissions work end to end.
