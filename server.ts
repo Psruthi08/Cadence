@@ -46,6 +46,8 @@ const ai = new GoogleGenAI({
     headers: {
       'User-Agent': 'aistudio-build',
     },
+    timeout: 18_000,
+    retryOptions: { attempts: 1 },
   },
 });
 
@@ -249,7 +251,7 @@ Return a valid JSON object matching the exact schema requested with:
 
     // Try calling Gemini with retry and model fallback
     let parsedData: SpeechAnalysisResponse | null = null;
-    const candidateModels = ['gemini-3.8-flash', 'gemini-flash-latest', 'gemini-3.1-flash-lite'];
+    const candidateModels = ['gemini-3.8-flash', 'gemini-3.1-flash-lite'];
 
     for (const modelName of candidateModels) {
       try {
@@ -615,7 +617,6 @@ Scores must be numbers from 0 to 100.
     // on one model does not break the practice drill.
     const candidateModels = [
       'gemini-3.8-flash',
-      'gemini-flash-latest',
       'gemini-3.1-flash-lite',
     ];
 
