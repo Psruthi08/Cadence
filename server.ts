@@ -620,75 +620,74 @@ Scores must be numbers from 0 to 100.
       'gemini-3.1-flash-lite',
     ];
 
-    let response;
-    let lastError;
+    type DrillFeedback = {
+      overallFeedback: string;
+      strengths: string[];
+      improvements: string[];
+      fillerWords: string[];
+      clarity: number;
+      confidence: number;
+      delivery: number;
+    };
+
+    let feedback: DrillFeedback | null = null;
+    let lastError: unknown;
 
     for (const modelName of candidateModels) {
       try {
         console.log(`Trying drill analysis with model: ${modelName}`);
 
-        response = await ai.models.generateContent({
+        const response = await ai.models.generateContent({
           model: modelName,
           contents: prompt,
+          config: {
+            responseMimeType: 'application/json',
+            responseSchema: {
+              type: Type.OBJECT,
+              properties: {
+                overallFeedback: { type: Type.STRING },
+                strengths: { type: Type.ARRAY, items: { type: Type.STRING } },
+                improvements: { type: Type.ARRAY, items: { type: Type.STRING } },
+                fillerWords: { type: Type.ARRAY, items: { type: Type.STRING } },
+                clarity: { type: Type.NUMBER },
+                confidence: { type: Type.NUMBER },
+                delivery: { type: Type.NUMBER },
+              },
+              required: [
+                'overallFeedback',
+                'strengths',
+                'improvements',
+                'fillerWords',
+                'clarity',
+                'confidence',
+                'delivery',
+              ],
+            },
+          },
         });
 
-        if (response?.text) {
-          console.log(`Drill analysis succeeded with model: ${modelName}`);
-          break;
-        }
+        if (!response.text) throw new Error('Gemini returned an empty drill response.');
+        feedback = JSON.parse(response.text) as DrillFeedback;
+        console.log(`Drill analysis succeeded with model: ${modelName}`);
+        break;
       } catch (error) {
         lastError = error;
-
-        const status =
-          typeof error === 'object' &&
-          error !== null &&
-          'status' in error
-            ? (error as { status?: number }).status
-            : undefined;
-
-        console.warn(
-          `Drill model ${modelName} failed with status ${status}. Trying next model...`
-        );
-
-        // Small delay before trying the next model.
-        await new Promise((resolve) => setTimeout(resolve, 500));
+        const status = typeof error === 'object' && error !== null && 'status' in error
+          ? (error as { status?: number }).status
+          : undefined;
+        console.warn(`Drill model ${modelName} failed with status ${status}; trying fallback.`);
+        if (modelName !== candidateModels[candidateModels.length - 1]) {
+          await new Promise((resolve) => setTimeout(resolve, 500));
+        }
       }
     }
 
-    if (!response) {
-      throw lastError || new Error('All Gemini drill models failed.');
-    }
-
-    const text = response.text;
-
-    if (!text) {
-      return res.status(500).json({
-        error: 'Gemini returned an empty response.',
-      });
-    }
-
-    let cleanedText = text.trim();
-
-    // Remove Markdown JSON fences if Gemini adds them.
-    if (cleanedText.startsWith('```json')) {
-      cleanedText = cleanedText
-        .replace(/^```json/, '')
-        .replace(/```$/, '')
-        .trim();
-    } else if (cleanedText.startsWith('```')) {
-      cleanedText = cleanedText
-        .replace(/^```/, '')
-        .replace(/```$/, '')
-        .trim();
-    }
-
-    const feedback = JSON.parse(cleanedText);
-
+    if (!feedback) throw lastError || new Error('All Gemini drill models failed.');
     return res.json(feedback);
   } catch (error) {
     console.error('Drill analysis error:', error);
 
-    return res.status(500).json({
+    return res.status(503).json({
       error:
         'Gemini is temporarily unavailable. Please try submitting the drill again in a moment.',
     });
