@@ -221,7 +221,8 @@ Your job is to provide honest, rigorous, compassionate, and precise coaching.
 
 If audio is provided:
 1. Transcribe the speech VERBATIM without auto-cleaning filler words. If the speaker said "uh, basically like", you must preserve every single "uh", "like", and "basically".
-2. If no audio is provided but a transcript is provided, analyze the provided transcript with identical forensic rigor.
+2. Treat the topic and speaker notes as context only. Never include them in the transcript unless you can hear the speaker say them. Never invent a generic closing or substitute a canned sentence when speech is unclear; return an empty transcript if no speech is intelligible.
+3. If no audio is provided but a transcript is provided, analyze the provided transcript with identical forensic rigor.
 
 Return a valid JSON object matching the exact schema requested with:
 - Verbatim transcript
@@ -239,7 +240,7 @@ Return a valid JSON object matching the exact schema requested with:
         },
       });
       contents.push({
-        text: `Listen to this recorded practice speech of ${Math.round(durationSeconds)} seconds on topic "${topic}". Transcribe verbatim preserving all crutches, evaluate delivery metrics honestly, and provide actionable coaching tips for students/job seekers. Return as JSON.`,
+        text: `Listen to the attached audio. The topic "${topic}" is context only, not spoken content. Transcribe only words that are clearly audible, preserving fillers. Do not invent words, echo the topic, or add a generic opening or closing. If no speech is intelligible, return an empty transcript. Evaluate delivery metrics honestly and return the requested JSON.`,
       });
     } else if (incomingTranscript) {
       contents.push({
@@ -500,6 +501,20 @@ Return a valid JSON object matching the exact schema requested with:
           recruiterVerdict: 'High potential candidate; eliminate conversational fillers for an immediate bump in perceived authority.',
         },
       };
+    }
+
+    if (audioBase64) {
+      const normalizedTranscript = parsedData.transcript.trim().toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+      if (!normalizedTranscript) {
+        return res.status(422).json({
+          error: 'No clear speech was recognized. Please record again in a quieter place and speak close to the microphone.',
+        });
+      }
+      if (/thank you for listening to my practice talk on/.test(normalizedTranscript)) {
+        return res.status(422).json({
+          error: 'The speech recognizer returned a generic placeholder instead of your words. No session was created; please retake the recording and try again.',
+        });
+      }
     }
 
     return res.json(parsedData);
